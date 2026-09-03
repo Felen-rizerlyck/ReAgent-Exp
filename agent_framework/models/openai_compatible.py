@@ -58,8 +58,13 @@ class OpenAICompatibleChatModel(ChatModel):
         except requests.exceptions.RequestException as exc:
             raise ModelError(f"Model request failed: {exc}") from exc
 
-        data = response.json()
-        message = data["choices"][0]["message"]
+        try:
+            data = response.json()
+            message = data["choices"][0]["message"]
+        except (ValueError, KeyError, IndexError, TypeError) as exc:
+            raise ModelError(
+                "Model provider returned an invalid chat completion response."
+            ) from exc
 
         content = message.get("content") or ""
         raw_tool_calls = message.get("tool_calls") or []

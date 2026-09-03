@@ -16,11 +16,13 @@ class SerpApiSearchAdapter(SourceAdapter):
         *,
         api_key: str,
         engine: str = "google",
+        source_name: str = "serpapi",
         base_url: str = "https://serpapi.com/search.json",
         timeout: int = 30,
     ) -> None:
         self.api_key = api_key
         self.engine = engine
+        self.source_name = source_name
         self.base_url = base_url
         self.timeout = timeout
 
@@ -44,7 +46,12 @@ class SerpApiSearchAdapter(SourceAdapter):
         except requests.RequestException as exc:
             raise SourceAdapterError(f"SerpApi search failed: {exc}") from exc
 
-        payload = response.json()
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise SourceAdapterError("SerpApi returned invalid JSON.") from exc
+        if not isinstance(payload, dict):
+            raise SourceAdapterError("SerpApi returned an unexpected response shape.")
         organic_results = (
             payload.get("organic_results")
             or payload.get("scholar_results")
@@ -87,18 +94,24 @@ class SerpApiSearchAdapter(SourceAdapter):
 
 def _extract_authors(item: dict[str, Any]) -> list[str]:
     authors: list[str] = []
+    raw_authors = item.get("authors")
+    if isinstance(raw_authors, list):
+        for author in raw_authors:
+            if isinstance(author, str):
+                authors.append(author)
+            elif isinstance(author, dict) and author.get("name"):
+                authors.append(str(author["name"]))
+
     publication_info = item.get("publication_info") or {}
-    summary = publication_info.get("summary")
-    if summary:
-        authors.append(summary)
+    publication_authors = publication_info.get("authors") if isinstance(publication_info, dict) else None
+    if isinstance(publication_authors, list):
+        authors.extend(
+            author if isinstance(author, str) else str(author.get("name", ""))
+            for author in publication_authors
+            if isinstance(author, str) or isinstance(author, dict)
+        )
 
-    inline_links = item.get("inline_links") or {}
-    if isinstance(inline_links, dict):
-        cited_by = inline_links.get("cited_by") or {}
-        if isinstance(cited_by, dict):
-            authors.extend(cited_by.get("authors", []))
-
-    return [author for author in authors if isinstance(author, str) and author]
+    return list(dict.fromkeys(author for author in authors if author))
 
 
 def _extract_venue(item: dict[str, Any]) -> str | None:

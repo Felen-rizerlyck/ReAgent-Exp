@@ -2,3 +2,7 @@
 __pycache__/
 .pytest_cache/
 *.pyc
+
+# Generated research outputs stay local; keep only the directory placeholder.
+research_results/*
+!research_results/.gitkeep

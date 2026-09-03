@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
+from datetime import datetime
+from pathlib import Path
 
 from .models.base import ChatModel, Message, ModelError
 from .tools import ToolRegistry
@@ -41,11 +44,24 @@ class Agent:
         tools: ToolRegistry,
         system_prompt: str = DEFAULT_SYSTEM_PROMPT,
         max_steps: int = 8,
+        status_callback: Callable[[str], None] | None = None,
     ) -> None:
         self.model = model
         self.tools = tools
         self.system_prompt = system_prompt
         self.max_steps = max_steps
+        self.status_callback = status_callback
+        self.messages: list[Message] = []
+        self.research_output_dir: str | None = None
+
+    def reset(self) -> None:
+        """Start a fresh conversation and clear its research binding."""
+        self.messages = []
+        self.research_output_dir = None
+
+    def _emit_status(self, message: str) -> None:
+        if self.status_callback is not None:
+            self.status_callback(message)
 
     def _try_handle_locally(self, user_input: str) -> str | None:
         text = user_input.strip()
@@ -64,17 +80,24 @@ class Agent:
     def run(self, user_input: str) -> str:
         local_result = self._try_handle_locally(user_input)
         if local_result is not None:
+            if not self.messages:
+                self.messages.append({"role": "system", "content": self.system_prompt})
+            self.messages.extend([
+                {"role": "user", "content": user_input},
+                {"role": "assistant", "content": local_result},
+            ])
             return local_result
 
-        messages: list[Message] = [
-            {"role": "system", "content": self.system_prompt},
-            {"role": "user", "content": user_input},
-        ]
+        if not self.messages:
+            self.messages.append({"role": "system", "content": self.system_prompt})
+        self.messages.append({"role": "user", "content": user_input})
 
-        for _ in range(self.max_steps):
+        for step in range(1, self.max_steps + 1):
+            self._emit_status(f"step {step}/{self.max_steps}: calling model")
             try:
-                response = self.model.complete(messages, tools=self.tools.specs())
+                response = self.model.complete(self.messages, tools=self.tools.specs())
             except ModelError as exc:
+                self._emit_status(f"model call failed: {exc}")
                 return f"Model call failed: {exc}"
 
             assistant_message: Message = {
@@ -95,18 +118,30 @@ class Agent:
                     for call in response.tool_calls
                 ]
 
-            messages.append(assistant_message)
+            self.messages.append(assistant_message)
 
             if not response.tool_calls:
+                self._emit_status("model returned a final answer")
+                if self.research_output_dir:
+                    _save_research_response(self.research_output_dir, user_input, self.messages, response.content)
                 return response.content.strip()
 
             for call in response.tool_calls:
+                self._emit_status(f"calling tool: {call.name}")
+                self.tools.set_research_output_dir(self.research_output_dir)
                 try:
                     tool_result = self.tools.call(call.name, call.arguments)
                 except Exception as exc:  # noqa: BLE001
                     tool_result = f"Tool execution failed: {exc}"
+                    self._emit_status(f"tool failed: {call.name}: {exc}")
+                else:
+                    self._emit_status(f"tool completed: {call.name}")
 
-                messages.append(
+                self.research_output_dir = self.research_output_dir or _find_research_output_dir(
+                    tool_result, call.arguments
+                )
+
+                self.messages.append(
                     {
                         "role": "tool",
                         "tool_call_id": call.id,
@@ -115,4 +150,49 @@ class Agent:
                     }
                 )
 
+        self._emit_status("agent stopped at the maximum number of steps")
         return "Agent stopped because it reached the maximum number of steps."
+
+
+def _find_research_output_dir(tool_result: str, arguments: dict[str, object]) -> str | None:
+    try:
+        payload = json.loads(tool_result)
+    except (TypeError, json.JSONDecodeError):
+        payload = {}
+    if isinstance(payload, dict):
+        artifacts = payload.get("artifacts")
+        if isinstance(artifacts, dict) and isinstance(artifacts.get("output_dir"), str):
+            return artifacts["output_dir"]
+        if isinstance(payload.get("research_dir"), str):
+            return payload["research_dir"]
+    value = arguments.get("research_dir")
+    return value if isinstance(value, str) else None
+
+
+def _save_research_response(
+    output_dir: str,
+    user_input: str,
+    messages: list[Message],
+    final_answer: str,
+) -> None:
+    project_root = Path(__file__).resolve().parents[1]
+    target = Path(output_dir)
+    if not target.is_absolute():
+        target = project_root / target
+    target = target.resolve()
+    try:
+        target.relative_to(project_root / "research_results")
+    except ValueError:
+        return
+    if not target.is_dir():
+        return
+    (target / "final_answer.md").write_text(final_answer.strip() + "\n", encoding="utf-8")
+    trace = {
+        "generated_at": datetime.utcnow().isoformat(),
+        "user_input": user_input,
+        "messages": messages,
+        "final_answer": final_answer,
+    }
+    (target / "conversation.json").write_text(
+        json.dumps(trace, ensure_ascii=False, indent=2, default=str), encoding="utf-8"
+    )

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import asdict
 from typing import Any
 import xml.etree.ElementTree as ET
 
@@ -41,7 +40,9 @@ class ArxivSourceAdapter(SourceAdapter):
             "sortOrder": "descending",
         }
         if query.filters.get("category"):
-            params["search_query"] = f"cat:{query.filters['category']}"
+            params["search_query"] = (
+                f"all:{search_query} AND cat:{query.filters['category']}"
+            )
 
         try:
             response = requests.get(
@@ -54,7 +55,10 @@ class ArxivSourceAdapter(SourceAdapter):
         except requests.RequestException as exc:
             raise SourceAdapterError(f"arXiv search failed: {exc}") from exc
 
-        return self._parse_feed(response.text, query)
+        try:
+            return self._parse_feed(response.text, query)
+        except ET.ParseError as exc:
+            raise SourceAdapterError("arXiv returned invalid XML.") from exc
 
     def fetch(self, result: SearchResult) -> dict[str, Any]:
         return result.raw_payload

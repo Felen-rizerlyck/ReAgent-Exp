@@ -46,13 +46,17 @@ def search_result_key(result: SearchResult) -> str:
 
 def deduplicate_search_results(results: list[SearchResult]) -> list[SearchResult]:
     seen: set[str] = set()
+    seen_titles: set[str] = set()
     deduplicated: list[SearchResult] = []
 
     for result in results:
         key = search_result_key(result)
-        if key in seen:
+        title_key = normalize_title(result.title)
+        if key in seen or (title_key and title_key in seen_titles):
             continue
         seen.add(key)
+        if title_key:
+            seen_titles.add(title_key)
         deduplicated.append(result)
 
     return deduplicated
@@ -69,6 +73,10 @@ def source_confidence_for(result: SearchResult, source_confidence: str | None = 
         "arxiv": SourceConfidence.HIGH,
         "openalex": SourceConfidence.HIGH,
         "serpapi": SourceConfidence.MEDIUM,
+        "serpapi_web": SourceConfidence.MEDIUM,
+        "serpapi_scholar": SourceConfidence.MEDIUM,
+        "industry_web": SourceConfidence.MEDIUM,
+        "opensource_github": SourceConfidence.MEDIUM,
     }
     return mapping.get(result.source, SourceConfidence.MEDIUM)
 
@@ -149,10 +157,14 @@ def build_research_report(
     evidence_items: list[EvidenceItem],
     notes: dict[str, Any] | None = None,
 ) -> ResearchReport:
-    top_findings = [
-        f"{item.result.title} ({item.result.source}, {item.confidence.value}, score={item.relevance:.2f})"
-        for item in ranked_results[:5]
-    ]
+    top_findings = []
+    for item in ranked_results[:5]:
+        abstract = _compact_text(item.result.abstract or "", max_length=360)
+        detail = f": {abstract}" if abstract else ""
+        top_findings.append(
+            f"{item.result.title}{detail} "
+            f"({item.result.source}, {item.confidence.value}, score={item.relevance:.2f})"
+        )
     sources = [
         {
             "source": item.result.source,
@@ -168,7 +180,11 @@ def build_research_report(
     return ResearchReport(
         report_id=f"report-{task_id}",
         task_id=task_id,
-        executive_summary="Preliminary evidence package generated from ranked search results.",
+        executive_summary=(
+            f"The search retrieved {len(ranked_results)} unique results and selected "
+            f"{len(evidence_items)} evidence items for preliminary synthesis. "
+            "The findings below are based on available metadata and abstracts."
+        ),
         research_questions=[query],
         key_findings=top_findings,
         important_papers=[_paper_summary(item) for item in ranked_results[:5]],
@@ -198,6 +214,10 @@ def _source_weight(source: str) -> float:
         "arxiv": 2.5,
         "openalex": 2.4,
         "serpapi": 1.1,
+        "serpapi_web": 1.1,
+        "serpapi_scholar": 1.2,
+        "industry_web": 1.4,
+        "opensource_github": 1.5,
     }.get(source, 0.5)
 
 
@@ -269,6 +289,7 @@ def _paper_summary(item: RankedSearchResult) -> dict[str, Any]:
         "url": result.url,
         "doi": result.doi,
         "arxiv_id": result.arxiv_id,
+        "abstract": _compact_text(result.abstract or "", max_length=1000) or None,
         "score": item.relevance,
         "confidence": item.confidence.value,
         "reason": item.reason,
@@ -290,3 +311,10 @@ def _explain_ranking(query: str, result: SearchResult, relevance: float, confide
     if not reasons:
         reasons.append("baseline source confidence")
     return f"{confidence.value} confidence; " + "; ".join(reasons)
+
+
+def _compact_text(text: str, max_length: int) -> str:
+    normalized = re.sub(r"\s+", " ", text).strip()
+    if len(normalized) <= max_length:
+        return normalized
+    return normalized[: max_length - 3].rstrip() + "..."

@@ -1,14 +1,18 @@
-# Simple Python Agent Framework
+# Literature Research Agent
 
-一个从零开始、便于扩展的 Python Agent 骨架，当前包含：
+An extensible Python Agent framework for general chat, tool calling, and multi-source literature research.
 
-- 模型抽象层
-- DeepSeek V4 默认接入
-- 工具注册与调用
-- Agent 执行循环
-- 命令行交互入口
+Current capabilities:
 
-## 1. 安装
+- OpenAI-compatible chat model transport, with DeepSeek enabled by default;
+- tool registration, JSON schema generation, and a bounded Agent loop;
+- built-in time, calculator, and workspace file tools;
+- arXiv, OpenAlex, SerpApi Web, and Google Scholar search;
+- normalized search results, deduplication, relevance ranking, and source confidence;
+- structured research reports and reference lists;
+- automatic export of every research pass to `research_results/`.
+
+## Installation
 
 ```bash
 python -m venv .venv
@@ -16,87 +20,147 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
-## 2. 配置
+## Configuration
 
-复制 `.env.example` 为 `.env`，然后填入你的 API Key：
+Copy the environment template and add the model API key:
 
 ```bash
 copy .env.example .env
 ```
 
-默认模型配置：
+Default model configuration:
 
-- provider: `deepseek`
-- model: `deepseek-v4-flash`
+```text
+AGENT_MODEL_PROVIDER=deepseek
+AGENT_MODEL_NAME=deepseek-v4-flash
+```
 
-如果你想切到更强的版本，可以把 `AGENT_MODEL_NAME` 改为 `deepseek-v4-pro`。
+Optional research configuration:
 
-## 3. 运行
+```text
+SERPAPI_API_KEY=        # required for Web and Google Scholar search
+OPENALEX_API_KEY=       # optional
+OPENALEX_MAILTO=        # optional request identification
+ARXIV_USER_AGENT=       # optional request identification
+RESEARCH_TIMEOUT=30     # optional source request timeout
+```
+
+Optional model and Agent settings:
+
+```text
+DEEPSEEK_BASE_URL=https://api.deepseek.com
+AGENT_TIMEOUT=60
+AGENT_MAX_STEPS=8
+```
+
+## Running
+
+The default mode is research mode:
 
 ```bash
 python -m agent_framework.cli
 ```
 
-进入命令行后可以直接提问，例如：
+Modes can also be selected explicitly:
 
-- `现在上海时间几点？`
-- `帮我计算 (12 + 8) * 3`
+```bash
+python -m agent_framework.cli --mode chat
+python -m agent_framework.cli --mode research
+```
 
-输入 `exit` 或 `quit` 可退出。
+Optional provider and model overrides:
 
-## 4. 项目结构
+```bash
+python -m agent_framework.cli --provider deepseek --model deepseek-v4-flash
+```
+
+Enter a question in the interactive prompt. Type `exit` or `quit` to leave.
+
+## Research Tools
+
+Research mode registers the following tools:
+
+- `search_arxiv`: search arXiv papers and preprints;
+- `search_openalex`: search OpenAlex scholarly works and metadata;
+- `search_web`: search general web pages through SerpApi;
+- `search_scholar`: search Google Scholar through SerpApi;
+- `research_literature`: run multi-source search, deduplication, ranking, evidence packaging, and report generation.
+
+The normalized source names are `arxiv`, `openalex`, `serpapi_web`, and `serpapi_scholar`. SerpApi results are primarily discovery and cross-checking signals; they are not automatically equivalent to peer-reviewed sources.
+
+## Research Result Export
+
+Each `research_literature` call creates a new directory under the project root:
+
+```text
+research_results/
+  topic__YYYYMMDD_HHMMSS_microseconds/
+    report.md
+    report.json
+    references.md
+    references.json
+    metadata.json
+```
+
+File descriptions:
+
+- `report.md`: readable Markdown report;
+- `report.json`: structured research report;
+- `references.md`: references with authors, dates, sources, and URLs;
+- `references.json`: metadata for the top ranked results;
+- `metadata.json`: query, sources, result counts, and export information.
+
+The current version creates reference links only. It does not download paper files.
+
+Existing return fields from `research_literature` are preserved. The result additionally contains an `artifacts` field:
+
+```json
+{
+  "artifacts": {
+    "output_dir": "...",
+    "report_path": "...",
+    "report_json_path": "...",
+    "references_path": "...",
+    "references_json_path": "...",
+    "metadata_path": "..."
+  }
+}
+```
+
+If local export fails, the search result is still returned and `artifacts` contains `status` and `reason` fields.
+
+## Project Structure
 
 ```text
 agent_framework/
-  cli.py
-  config.py
-  agent.py
-  tools.py
-  builtin_tools.py
-  models/
-    base.py
-    registry.py
-    openai_compatible.py
-    deepseek.py
+  agent.py                 # Agent execution loop
+  cli.py                   # CLI entry point and composition
+  config.py                # environment configuration
+  tools.py                 # tool definitions and registry
+  builtin_tools.py         # built-in tools
+  models/                  # model abstractions and providers
+  schema/                  # research data models
+  sources/                 # external source adapters
+  research/                # pipeline, processing, export, and runtime config
+  memory/                  # session memory abstractions and in-memory store
+docs/                      # architecture, roadmap, and usage notes
+research_results/          # generated at runtime
+workspace_tools/           # separately attachable workspace tools
 ```
 
-## 5. 默认内置工具
+## Safety and Current Limitations
 
-当前内置工具统一定义在 `agent_framework/builtin_tools.py`：
+- File paths are restricted to the workspace; `.env`, `.git/`, `.venv/`, `agent_framework/`, and `workspace_tools/` are protected;
+- research exports use generated unique directory names and do not overwrite previous results;
+- reports currently use retrieved metadata and abstracts, without PDF full-text parsing;
+- only an in-memory session store is available;
+- there is no HTTP service entry point yet; the primary interface is the CLI.
 
-- `get_current_time`
-- `calculator`
-- `echo`
-- `list_directory`
-- `read_text_file`
-- `write_text_file`
-- `append_text_file`
-- `path_exists`
-- `find_paths`
+## Adding a Model Provider
 
-其中涉及文件系统的工具会默认保护：
+Subclass `ChatModel` or reuse `OpenAICompatibleChatModel`, then register the provider in `build_model_registry()` in `agent_framework/cli.py` and add its environment configuration in `config.py`.
 
-- `.env`
-- `.venv/`
-- `.git/`
-
-## 6. 后续扩展建议
-
-- 增加记忆模块
-- 增加规划器 Planner
-- 增加多 Agent 协作
-- 增加流式输出
-- 增加更完整的工具参数校验
-
-## 7. 如何添加新模型
-
-这个框架已经把模型提供方做成了注册表模式。你只需要：
-
-1. 新建一个模型类，继承 `ChatModel` 或直接复用 `OpenAICompatibleChatModel`
-2. 在 `build_model_registry()` 中注册新的 provider 名称
-3. 给它补上对应的环境变量读取逻辑
-
-例如：
+Example:
 
 ```python
 from agent_framework.models.openai_compatible import OpenAICompatibleChatModel
@@ -112,30 +176,11 @@ class MyModel(OpenAICompatibleChatModel):
         )
 ```
 
-## 8. 研究模式
+## Future Directions
 
-使用研究模式进行分析：
-
-```bash
-python -m agent_framework.cli --mode research
-```
-
-添加工具：
-
-- `search_arxiv`
-- `search_openalex`
-- `search_web`
-- `search_scholar`
-- `research_literature`
-
-The `research_literature` tool performs multi-source search, deduplication, ranking, evidence packaging, and a preliminary report.
-
-## 9. 研究模式环境配置
-
-设置环境变量：
-
-- `SERPAPI_API_KEY`
-- `OPENALEX_API_KEY`
-- `OPENALEX_MAILTO`
-- `ARXIV_USER_AGENT`
-- `RESEARCH_TIMEOUT`
+- query planning and iterative research;
+- PDF download and full-text parsing;
+- claim-to-evidence and citation verification;
+- persistent sessions, caching, and report management;
+- HTTP service interface;
+- multi-agent orchestration and research quality evaluation.

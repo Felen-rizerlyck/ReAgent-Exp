@@ -48,7 +48,12 @@ class OpenAlexSourceAdapter(SourceAdapter):
         except requests.RequestException as exc:
             raise SourceAdapterError(f"OpenAlex search failed: {exc}") from exc
 
-        payload = response.json()
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise SourceAdapterError("OpenAlex returned invalid JSON.") from exc
+        if not isinstance(payload, dict):
+            raise SourceAdapterError("OpenAlex returned an unexpected response shape.")
         results: list[SearchResult] = []
         for item in payload.get("results", []):
             authors = [
@@ -60,7 +65,7 @@ class OpenAlexSourceAdapter(SourceAdapter):
             primary_location = item.get("primary_location") or {}
             source_info = primary_location.get("source") or {}
             doi = item.get("doi")
-            openalex_id = item.get("id") or item.get("doi") or item.get("display_name")
+            openalex_id = item.get("id") or item.get("doi") or item.get("display_name") or ""
 
             results.append(
                 SearchResult(

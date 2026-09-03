@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 
 from .agent import Agent, DEFAULT_SYSTEM_PROMPT
 from .builtin_tools import build_tool_registry
@@ -16,7 +17,11 @@ def build_model_registry() -> ModelRegistry:
     return registry
 
 
-def create_agent(settings: AgentSettings, mode: str = "research") -> Agent:
+def create_agent(
+    settings: AgentSettings,
+    mode: str = "research",
+    status_callback=None,
+) -> Agent:
     if not settings.api_key:
         raise ValueError(
             "Missing API key. Please set the corresponding environment variable in .env."
@@ -34,7 +39,7 @@ def create_agent(settings: AgentSettings, mode: str = "research") -> Agent:
     tools = build_tool_registry()
     system_prompt = DEFAULT_SYSTEM_PROMPT
     if mode == "research":
-        tools.register_many(build_research_tool_registry().tools())
+        tools.register_many(build_research_tool_registry(model=model).tools())
         system_prompt = f"{DEFAULT_SYSTEM_PROMPT}\n\n{RESEARCH_SYSTEM_PROMPT}"
 
     agent = Agent(
@@ -42,6 +47,7 @@ def create_agent(settings: AgentSettings, mode: str = "research") -> Agent:
         tools=tools,
         max_steps=settings.max_steps,
         system_prompt=system_prompt,
+        status_callback=status_callback,
     )
     return agent
 
@@ -59,7 +65,10 @@ def main() -> None:
     if args.model:
         settings.model_name = args.model
 
-    agent = create_agent(settings, mode=args.mode)
+    def show_status(message: str) -> None:
+        print(f"[status] {message}", file=sys.stderr, flush=True)
+
+    agent = create_agent(settings, mode=args.mode, status_callback=show_status)
 
     print("Simple Agent is ready. Type 'exit' to quit.")
     print(f"Loaded tools: {', '.join(agent.tools.names())}")
@@ -67,6 +76,10 @@ def main() -> None:
         user_input = input("\nYou> ").strip()
         if user_input.lower() in {"exit", "quit"}:
             break
+        if user_input.lower() == "/reset":
+            agent.reset()
+            print("Conversation and research binding reset.")
+            continue
         if not user_input:
             continue
 

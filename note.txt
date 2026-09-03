@@ -1,9 +1,0 @@
-github mcp integrate
-research topic summarize
- - use llm-as-a-judge for eval
- - scientific or not
-web search/arxiv
-
-pdf generation
-memory saving
-daily report

@@ -9,6 +9,8 @@ from .tools import Tool, ToolRegistry, tool
 
 WORKSPACE_ROOT = Path(__file__).resolve().parent.parent
 PROTECTED_DIRS = {
+    WORKSPACE_ROOT / "agent_framework",
+    WORKSPACE_ROOT / "workspace_tools",
     WORKSPACE_ROOT / ".git",
     WORKSPACE_ROOT / ".venv",
     WORKSPACE_ROOT / "__pycache__",

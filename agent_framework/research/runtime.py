@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 
+from agent_framework.research.opensource import GitHubSourceAdapter
 from agent_framework.research.registry import SourceAdapterRegistry
 from agent_framework.sources.arxiv import ArxivSourceAdapter
 from agent_framework.sources.openalex import OpenAlexSourceAdapter
@@ -17,6 +18,7 @@ class ResearchRuntimeConfig:
     openalex_api_key: str | None = None
     openalex_mailto: str | None = None
     serpapi_api_key: str | None = None
+    github_token: str | None = None
     request_timeout: int = 30
 
     @classmethod
@@ -26,6 +28,7 @@ class ResearchRuntimeConfig:
             openalex_api_key=os.getenv("OPENALEX_API_KEY"),
             openalex_mailto=os.getenv("OPENALEX_MAILTO"),
             serpapi_api_key=os.getenv("SERPAPI_API_KEY"),
+            github_token=os.getenv("GITHUB_TOKEN"),
             request_timeout=int(os.getenv("RESEARCH_TIMEOUT", "30")),
         )
 
@@ -55,6 +58,7 @@ def build_source_adapter_registry(config: ResearchRuntimeConfig | None = None) -
         lambda **kwargs: SerpApiSearchAdapter(
             api_key=config.serpapi_api_key or "",
             engine="google",
+            source_name="serpapi_web",
             timeout=config.request_timeout,
             **kwargs,
         ),
@@ -64,6 +68,15 @@ def build_source_adapter_registry(config: ResearchRuntimeConfig | None = None) -
         lambda **kwargs: SerpApiSearchAdapter(
             api_key=config.serpapi_api_key or "",
             engine="google_scholar",
+            source_name="serpapi_scholar",
+            timeout=config.request_timeout,
+            **kwargs,
+        ),
+    )
+    registry.register(
+        "opensource_github",
+        lambda **kwargs: GitHubSourceAdapter(
+            token=config.github_token,
             timeout=config.request_timeout,
             **kwargs,
         ),
